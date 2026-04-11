@@ -81,4 +81,4 @@ jobs:
           
           gh release create "$TAG_NAME" "$MODULE_PATH" \
             --title "Nginx GeoIP2 Module for Nginx ${{ steps.nginx-version.outputs.version }} (${{ matrix.track }})" \
-            --notes "Automated build of \`ngx_http_geoip2_module.so\` compiled against Nginx ${{ steps.nginx-version.outputs.version }} (${{ matrix.track }} track)."
+            --notes "Automated build of \`ngx_http_geoip2_module.so\` compiled against Nginx ${{ steps.nginx-version.outputs.version }} (${{ matrix.track }})."
