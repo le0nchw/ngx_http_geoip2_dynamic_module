@@ -1,0 +1,84 @@
+name: Build and Release Nginx GeoIP2 Module
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write 
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        track: [mainline, stable]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch Nginx version (${{ matrix.track }})
+        id: nginx-version
+        run: |
+          # Differentiate scraping based on the current matrix track
+          if [ "${{ matrix.track }}" = "mainline" ]; then
+            # Grabs the first version number immediately following the "Mainline version" header
+            NGINX_VERSION=$(curl -s https://nginx.org/en/download.html | grep -iA 10 'Mainline version' | grep -oP 'nginx-\d+\.\d+\.\d+' | head -1 | sed 's/nginx-//')
+          else
+            # Grabs the first version number immediately following the "Stable version" header
+            NGINX_VERSION=$(curl -s https://nginx.org/en/download.html | grep -iA 10 'Stable version' | grep -oP 'nginx-\d+\.\d+\.\d+' | head -1 | sed 's/nginx-//')
+          fi
+          
+          echo "version=$NGINX_VERSION" >> $GITHUB_OUTPUT
+          echo "Track: ${{ matrix.track }} | Version: $NGINX_VERSION"
+
+      - name: Check if release already exists
+        id: check-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.nginx-version.outputs.version }}" > /dev/null 2>&1; then
+            echo "Release v${{ steps.nginx-version.outputs.version }} already exists. Skipping build."
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Release does not exist. Proceeding with build."
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install build dependencies
+        if: steps.check-release.outputs.exists == 'false'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libpcre3 libpcre3-dev zlib1g zlib1g-dev libssl-dev wget git libmaxminddb-dev
+
+      - name: Download Nginx source
+        if: steps.check-release.outputs.exists == 'false'
+        run: |
+          wget https://nginx.org/download/nginx-${{ steps.nginx-version.outputs.version }}.tar.gz
+          tar -xzvf nginx-${{ steps.nginx-version.outputs.version }}.tar.gz
+
+      - name: Clone ngx_http_geoip2_module
+        if: steps.check-release.outputs.exists == 'false'
+        run: |
+          git clone https://github.com/leev/ngx_http_geoip2_module.git
+
+      - name: Build Dynamic Module
+        if: steps.check-release.outputs.exists == 'false'
+        run: |
+          cd nginx-${{ steps.nginx-version.outputs.version }}
+          ./configure --with-compat --add-dynamic-module=../ngx_http_geoip2_module
+          make modules
+
+      - name: Publish to GitHub Releases
+        if: steps.check-release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MODULE_PATH="nginx-${{ steps.nginx-version.outputs.version }}/objs/ngx_http_geoip2_module.so"
+          TAG_NAME="v${{ steps.nginx-version.outputs.version }}"
+          
+          gh release create "$TAG_NAME" "$MODULE_PATH" \
+            --title "Nginx GeoIP2 Module for Nginx ${{ steps.nginx-version.outputs.version }} (${{ matrix.track }})" \
+            --notes "Automated build of \`ngx_http_geoip2_module.so\` compiled against Nginx ${{ steps.nginx-version.outputs.version }} (${{ matrix.track }} track)."
